@@ -4,3 +4,13 @@ pandas
 tradingview-screener
 plotly
 xlsxwriter
+streamlit>=1.33
+pandas>=2.0
+numpy>=1.26
+
+tradingview-screener>=2.4
+
+yfinance>=0.2.36
+ta-lib>=0.4.28
+
+xlsxwriter>=3.1
