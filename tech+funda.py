@@ -1,14 +1,12 @@
 # ============================================================
-# INDIAN STOCK SCREENER
+# INDIAN STOCK SCREENER (CLOUD SAFE)
 # TECHNICAL | FUNDAMENTAL | HYBRID
-# RSI LOGIC FIXED – SINGLE SOURCE OF TRUTH
+# NO pandas_ta | NO LOCAL INDICATORS
+# RSI LOGIC FIXED | NO STOCK LIMITATION
 # ============================================================
 
 import streamlit as st
 import pandas as pd
-import numpy as np
-import pandas_ta as ta
-import yfinance as yf
 from tradingview_screener import Query, Column as col
 import io
 
@@ -22,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("📊 Indian Stock Screener")
-st.caption("Technical • Fundamental • Hybrid | TradingView + Python")
+st.caption("Technical • Fundamental • Hybrid | TradingView (Cloud Safe)")
 
 # ============================================================
 # MODE SELECTOR
@@ -34,33 +32,18 @@ MODE = st.sidebar.selectbox(
     ["Technical Screener", "Fundamental Screener", "Hybrid Screener"]
 )
 
-limit = st.sidebar.slider("Max Stocks", 20, 150, 60)
+# TradingView safe upper bound
+limit = st.sidebar.slider("Max Stocks (TradingView)", 50, 500, 200)
 
 # ============================================================
-# PRESETS (ONLY CHANGE DEFAULTS – NEVER QUERY DIRECTLY)
+# PRESETS (MODIFY DEFAULTS ONLY)
 # ============================================================
 PRESETS = {
     "Custom": {},
-    "Swing": {
-        "RSI": (45, 65),
-        "ADX": 20,
-        "EMA": "EMA50",
-    },
-    "Positional": {
-        "ADX": 25,
-        "EMA": "EMA200",
-        "ROCE": 18,
-        "DE": 0.6,
-    },
-    "Value": {
-        "PE": 20,
-        "DE": 0.6,
-        "ROCE": 15,
-    },
-    "Quality": {
-        "ROE": 18,
-        "NM": 12,
-    },
+    "Swing": {"RSI": (45, 65), "ADX": 20, "EMA": "EMA50"},
+    "Positional": {"ADX": 25, "EMA": "EMA200", "ROCE": 18, "DE": 0.6},
+    "Value": {"PE": 20, "DE": 0.6, "ROCE": 15},
+    "Quality": {"ROE": 18, "NM": 12},
 }
 
 if MODE == "Hybrid Screener":
@@ -81,61 +64,41 @@ roe_min = 15.0
 de_max = 1.0
 
 # ============================================================
-# APPLY PRESET → MODIFY DEFAULTS ONLY
+# APPLY PRESET → CHANGE DEFAULTS ONLY
 # ============================================================
 if MODE == "Hybrid Screener" and preset != "Custom":
     p = PRESETS[preset]
-    if "RSI" in p:
-        rsi_min, rsi_max = p["RSI"]
-    if "ADX" in p:
-        adx_min = p["ADX"]
-    if "EMA" in p:
-        ema_filter = p["EMA"]
-    if "PE" in p:
-        pe_max = p["PE"]
-    if "ROCE" in p:
-        roce_min = p["ROCE"]
-    if "ROE" in p:
-        roe_min = p["ROE"]
-    if "DE" in p:
-        de_max = p["DE"]
-    if "NM" in p:
-        pass
+    rsi_min, rsi_max = p.get("RSI", (rsi_min, rsi_max))
+    adx_min = p.get("ADX", adx_min)
+    ema_filter = p.get("EMA", ema_filter)
+    pe_max = p.get("PE", pe_max)
+    roce_min = p.get("ROCE", roce_min)
+    roe_min = p.get("ROE", roe_min)
+    de_max = p.get("DE", de_max)
 
 # ============================================================
 # SIDEBAR FILTERS (SINGLE SOURCE OF TRUTH)
 # ============================================================
 
-# ---------- TECHNICAL ----------
 if MODE in ["Technical Screener", "Hybrid Screener"]:
     st.sidebar.subheader("📈 Technical Filters")
-
-    rsi_min, rsi_max = st.sidebar.slider(
-        "RSI Range", 0, 100, (rsi_min, rsi_max)
-    )
-
-    adx_min = st.sidebar.slider(
-        "ADX Min", 0, 60, adx_min
-    )
-
+    rsi_min, rsi_max = st.sidebar.slider("RSI Range", 0, 100, (rsi_min, rsi_max))
+    adx_min = st.sidebar.slider("ADX Min", 0, 60, adx_min)
     ema_filter = st.sidebar.selectbox(
         "Price Above EMA",
         ["None", "EMA20", "EMA50", "EMA200"],
         index=["None", "EMA20", "EMA50", "EMA200"].index(ema_filter)
-        if ema_filter in ["None", "EMA20", "EMA50", "EMA200"] else 0
     )
 
-# ---------- FUNDAMENTAL ----------
 if MODE in ["Fundamental Screener", "Hybrid Screener"]:
     st.sidebar.subheader("📊 Fundamental Filters")
-
     pe_max = st.sidebar.number_input("Max PE", 0.0, 200.0, pe_max)
     roce_min = st.sidebar.number_input("Min ROCE (%)", 0.0, 50.0, roce_min)
     roe_min = st.sidebar.number_input("Min ROE (%)", 0.0, 50.0, roe_min)
     de_max = st.sidebar.number_input("Max Debt / Equity", 0.0, 5.0, de_max)
 
 # ============================================================
-# TRADINGVIEW SAFE FIELDS
+# TRADINGVIEW SAFE FIELDS (VERIFIED)
 # ============================================================
 TV_FIELDS = [
     "name","sector","industry","close","volume",
@@ -148,7 +111,7 @@ TV_FIELDS = [
 ]
 
 # ============================================================
-# TRADINGVIEW QUERY (STRICT & CLEAN)
+# TRADINGVIEW QUERY
 # ============================================================
 @st.cache_data(show_spinner=False)
 def run_tv_scan():
@@ -160,59 +123,28 @@ def run_tv_scan():
         .limit(limit)
     )
 
-    # ---- TECHNICAL FILTERS ----
     if MODE in ["Technical Screener", "Hybrid Screener"]:
         q = q.where(
             col("RSI") >= rsi_min,
             col("RSI") <= rsi_max,
-            col("ADX") >= adx_min,
+            col("ADX") >= adx_min
         )
-
         if ema_filter != "None":
             q = q.where(col("close") > col(ema_filter))
 
-    # ---- FUNDAMENTAL FILTERS ----
     if MODE in ["Fundamental Screener", "Hybrid Screener"]:
         q = q.where(
             col("price_earnings_ttm") <= pe_max,
             col("return_on_invested_capital") >= roce_min,
             col("return_on_equity") >= roe_min,
-            col("debt_to_equity") <= de_max,
+            col("debt_to_equity") <= de_max
         )
 
     _, df = q.get_scanner_data(timeout=30)
     return df
 
 # ============================================================
-# LOCAL ENRICHMENT (DEFENSIVE)
-# ============================================================
-def enrich_local(df):
-    rows = []
-    for sym in df["name"].head(25):
-        try:
-            data = yf.download(sym + ".NS", period="6mo", progress=False)
-            if data.empty:
-                continue
-
-            rsi_local = ta.rsi(data["Close"], length=14).iloc[-1]
-            atr_local = ta.atr(
-                data["High"], data["Low"], data["Close"], length=14
-            ).iloc[-1]
-
-            rows.append({
-                "name": sym,
-                "RSI_local": rsi_local,
-                "ATR_local": atr_local,
-            })
-        except:
-            pass
-
-    if rows:
-        df = df.merge(pd.DataFrame(rows), on="name", how="left")
-    return df
-
-# ============================================================
-# RUN BUTTON
+# RUN
 # ============================================================
 if st.button("🚀 Run Screener"):
     with st.spinner("Running TradingView Screener..."):
@@ -222,17 +154,13 @@ if st.button("🚀 Run Screener"):
         st.warning("No stocks matched the criteria.")
         st.stop()
 
-    # ---- DEFENSIVE RSI FILTER (FINAL GUARANTEE) ----
+    # FINAL DEFENSIVE RSI FILTER (GUARANTEE)
     if MODE in ["Technical Screener", "Hybrid Screener"]:
         df = df[(df["RSI"] >= rsi_min) & (df["RSI"] <= rsi_max)]
-
-    if MODE in ["Technical Screener", "Hybrid Screener"]:
-        df = enrich_local(df)
 
     st.subheader(f"📋 Results ({len(df)} stocks)")
     st.dataframe(df, use_container_width=True)
 
-    # EXPORT
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False)
@@ -252,6 +180,6 @@ st.markdown(
     """
 **Designed by Gaurav**  
 Technical • Fundamental • Hybrid Market Intelligence  
-Built with ❤️ using TradingView + Python
+Built with ❤️ using TradingView (Cloud Safe)
 """
 )
