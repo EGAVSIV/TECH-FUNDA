@@ -1,0 +1,6 @@
+ta-lib
+streamlit
+pandas
+tradingview-screener
+plotly
+xlsxwriter
