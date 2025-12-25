@@ -1,199 +1,229 @@
+# ============================================================
+# INDIAN STOCK SCREENER – TECHNICAL | FUNDAMENTAL | HYBRID
+# SINGLE FILE – PRODUCTION READY
+# ============================================================
+
 import streamlit as st
 import pandas as pd
+import talib
+import yfinance as yf
 from tradingview_screener import Query, Column as col
-from typing import Optional
 import io
-import requests
 
-# ==================================================
-# PAGE CONFIG
-# ==================================================
+# ============================================================
+# STREAMLIT CONFIG
+# ============================================================
 st.set_page_config(
-    page_title="📈 Indian Technical Stock Screener",
+    page_title="Indian Stock Screener",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("📈 Indian Stock Technical Screener")
-st.caption("RSI • EMA • Bollinger • Stochastic • ADX | NSE + BSE")
+st.title("📊 Indian Stock Screener")
+st.caption("Technical • Fundamental • Hybrid | TradingView + Python")
 
-# ==================================================
-# SIDEBAR – PRESETS
-# ==================================================
+# ============================================================
+# MODE SELECTOR (STARTING DROPDOWN)
+# ============================================================
+st.sidebar.header("🧭 Screener Mode")
+
+MODE = st.sidebar.selectbox(
+    "Select Screener Type",
+    ["Technical Screener", "Fundamental Screener", "Hybrid Screener"]
+)
+
+limit = st.sidebar.slider("Max Stocks", 20, 150, 60)
+
+# ============================================================
+# PRESETS (ONLY FOR HYBRID)
+# ============================================================
 PRESETS = {
-    "None": None,
-    "Top Gainers": "gainers",
-    "Biggest Losers": "losers",
-    "Most Active": "most_active",
-    "Unusual Volume": "unusual_volume",
+    "Custom": {},
+    "Swing": {
+        "RSI": (45, 65),
+        "ADX": 20,
+        "ema": "EMA50",
+    },
+    "Positional": {
+        "ADX": 25,
+        "ema": "EMA200",
+        "ROCE": 18,
+        "DE": 0.6,
+    },
+    "Value": {
+        "PE": 20,
+        "DE": 0.6,
+        "ROCE": 15,
+    },
+    "Quality": {
+        "ROE": 18,
+        "NM": 12,
+        "FCF": 0,
+    },
 }
 
-st.sidebar.header("📌 Preset Filters")
-preset_label = st.sidebar.selectbox("Select Preset", PRESETS.keys())
-preset_value = PRESETS[preset_label]
+if MODE == "Hybrid Screener":
+    preset = st.sidebar.selectbox("Preset", PRESETS.keys())
+else:
+    preset = "Custom"
 
-# ==================================================
-# TECHNICAL FILTERS
-# ==================================================
-st.sidebar.header("📉 Momentum Filters")
+# ============================================================
+# FILTER SECTIONS (DYNAMIC)
+# ============================================================
 
-min_rsi = st.sidebar.slider("RSI Min", 0, 100, 40)
-max_rsi = st.sidebar.slider("RSI Max", 0, 100, 75)
+# ---------- TECHNICAL FILTERS ----------
+if MODE in ["Technical Screener", "Hybrid Screener"]:
+    st.sidebar.subheader("📈 Technical Filters")
 
-st.sidebar.header("📊 Trend Filters")
+    rsi_min, rsi_max = st.sidebar.slider("RSI Range", 0, 100, (40, 70))
+    adx_min = st.sidebar.slider("ADX Min", 0, 60, 20)
 
-adx_min = st.sidebar.slider("ADX Min (Trend Strength)", 0, 60, 20)
+    ema_filter = st.sidebar.selectbox(
+        "Price Above EMA",
+        ["None", "EMA20", "EMA50", "EMA200"]
+    )
 
-trend_direction = st.sidebar.selectbox(
-    "Trend Direction",
-    ["Any", "Bullish (+DI > -DI)", "Bearish (-DI > +DI)"]
-)
+# ---------- FUNDAMENTAL FILTERS ----------
+if MODE in ["Fundamental Screener", "Hybrid Screener"]:
+    st.sidebar.subheader("📊 Fundamental Filters")
 
-st.sidebar.header("📐 EMA Filters")
+    pe_max = st.sidebar.number_input("Max PE", 0.0, 100.0, 30.0)
+    roce_min = st.sidebar.number_input("Min ROCE (%)", 0.0, 50.0, 15.0)
+    roe_min = st.sidebar.number_input("Min ROE (%)", 0.0, 50.0, 15.0)
+    de_max = st.sidebar.number_input("Max Debt/Equity", 0.0, 5.0, 1.0)
 
-ema20 = st.sidebar.checkbox("Price > EMA 20", True)
-ema50 = st.sidebar.checkbox("Price > EMA 50", True)
-ema200 = st.sidebar.checkbox("Price > EMA 200", False)
+# ============================================================
+# TRADINGVIEW FIELD SET
+# ============================================================
+TV_FIELDS = [
+    "name","sector","industry","close","volume",
+    "market_cap_basic","price_earnings_ttm",
+    "return_on_equity","return_on_invested_capital",
+    "net_margin","free_cash_flow_ttm",
+    "debt_to_equity",
+    "EMA20","EMA50","EMA200",
+    "RSI","ADX","BB.upper","BB.lower"
+]
 
-st.sidebar.header("📦 Bollinger Band Filters")
+# ============================================================
+# TRADINGVIEW QUERY ENGINE
+# ============================================================
+@st.cache_data(show_spinner=False)
+def run_tv_scan():
+    q = (
+        Query()
+        .set_markets("india")
+        .select(*TV_FIELDS)
+        .where(col("type") == "stock")
+        .limit(limit)
+    )
 
-bb_condition = st.sidebar.selectbox(
-    "Bollinger Condition",
-    ["Any", "Near Lower Band", "Above Upper Band"]
-)
+    # ---- TECHNICAL CONDITIONS ----
+    if MODE in ["Technical Screener", "Hybrid Screener"]:
+        q = q.where(
+            col("RSI").between(rsi_min, rsi_max),
+            col("ADX") >= adx_min,
+        )
+        if ema_filter != "None":
+            q = q.where(col("close") > col(ema_filter))
 
-st.sidebar.header("🎯 Stochastic Filters")
-
-stoch_mode = st.sidebar.selectbox(
-    "Stochastic Mode",
-    ["Any", "Oversold (<20)", "Overbought (>80)", "Bullish (%K > %D)", "Bearish (%K < %D)"]
-)
-
-st.sidebar.header("🔊 Liquidity")
-
-min_volume = st.sidebar.number_input("Min Volume", value=100000)
-
-limit = st.sidebar.slider("Number of Stocks", 10, 200, 50)
-
-run_scan = st.sidebar.button("🚀 Run Screener")
-
-# ==================================================
-# TECHNICAL SCAN FUNCTION
-# ==================================================
-def run_technical_scan(preset: Optional[str]) -> pd.DataFrame:
-    try:
-        q = (
-            Query()
-            .set_markets("india")
-            .select(
-                "name",
-                "sector",
-                "close",
-                "change",
-                "volume",
-                "RSI",
-                "EMA20",
-                "EMA50",
-                "EMA200",
-                "BB.upper",
-                "BB.lower",
-                "Stoch.K",
-                "Stoch.D",
-                "ADX",
-                "ADX+DI",
-                "ADX-DI",
-            )
-            .where(
-                col("type") == "stock",
-                col("typespecs").has("common"),
-                col("is_primary") == True,
-                col("RSI") >= min_rsi,
-                col("RSI") <= max_rsi,
-                col("volume") >= min_volume,
-                col("ADX") >= adx_min,
-            )
-            .limit(limit)
+    # ---- FUNDAMENTAL CONDITIONS ----
+    if MODE in ["Fundamental Screener", "Hybrid Screener"]:
+        q = q.where(
+            col("price_earnings_ttm") <= pe_max,
+            col("return_on_invested_capital") >= roce_min,
+            col("return_on_equity") >= roe_min,
+            col("debt_to_equity") <= de_max,
         )
 
-        # EMA CONDITIONS
-        if ema20:
-            q = q.where(col("close") > col("EMA20"))
-        if ema50:
-            q = q.where(col("close") > col("EMA50"))
-        if ema200:
-            q = q.where(col("close") > col("EMA200"))
+    # ---- PRESET OVERRIDE (HYBRID) ----
+    if MODE == "Hybrid Screener" and preset != "Custom":
+        p = PRESETS[preset]
+        if "RSI" in p:
+            q = q.where(col("RSI").between(*p["RSI"]))
+        if "ADX" in p:
+            q = q.where(col("ADX") > p["ADX"])
+        if "ema" in p:
+            q = q.where(col("close") > col(p["ema"]))
+        if "ROCE" in p:
+            q = q.where(col("return_on_invested_capital") > p["ROCE"])
+        if "DE" in p:
+            q = q.where(col("debt_to_equity") < p["DE"])
+        if "PE" in p:
+            q = q.where(col("price_earnings_ttm") < p["PE"])
+        if "ROE" in p:
+            q = q.where(col("return_on_equity") > p["ROE"])
+        if "NM" in p:
+            q = q.where(col("net_margin") > p["NM"])
+        if "FCF" in p:
+            q = q.where(col("free_cash_flow_ttm") > p["FCF"])
 
-        # ADX DIRECTION
-        if trend_direction == "Bullish (+DI > -DI)":
-            q = q.where(col("ADX+DI") > col("ADX-DI"))
-        elif trend_direction == "Bearish (-DI > +DI)":
-            q = q.where(col("ADX-DI") > col("ADX+DI"))
+    _, df = q.get_scanner_data(timeout=30)
+    return df
 
-        # BOLLINGER
-        if bb_condition == "Near Lower Band":
-            q = q.where(col("close") <= col("BB.lower") * 1.02)
-        elif bb_condition == "Above Upper Band":
-            q = q.where(col("close") > col("BB.upper"))
+# ============================================================
+# LOCAL ENRICHMENT (ONLY FOR TECH / HYBRID)
+# ============================================================
+def enrich_local(df):
+    rows = []
+    for sym in df["name"].head(25):
+        try:
+            data = yf.download(sym + ".NS", period="6mo", progress=False)
+            if data.empty:
+                continue
 
-        # STOCHASTIC
-        if stoch_mode == "Oversold (<20)":
-            q = q.where(col("Stoch.K") < 20)
-        elif stoch_mode == "Overbought (>80)":
-            q = q.where(col("Stoch.K") > 80)
-        elif stoch_mode == "Bullish (%K > %D)":
-            q = q.where(col("Stoch.K") > col("Stoch.D"))
-        elif stoch_mode == "Bearish (%K < %D)":
-            q = q.where(col("Stoch.K") < col("Stoch.D"))
+            rsi = talib.RSI(data["Close"], 14).iloc[-1]
+            atr = talib.ATR(data["High"], data["Low"], data["Close"], 14).iloc[-1]
 
-        if preset:
-            q = q.set_property("preset", preset)
+            rows.append({
+                "name": sym,
+                "RSI_local": rsi,
+                "ATR_local": atr,
+            })
+        except:
+            pass
 
-        _, df = q.get_scanner_data(timeout=30)
-        return df
+    if rows:
+        df = df.merge(pd.DataFrame(rows), on="name", how="left")
+    return df
 
-    except requests.exceptions.HTTPError:
-        st.error("TradingView rejected the request. Reduce filters.")
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Unexpected error: {e}")
-        return pd.DataFrame()
-
-# ==================================================
-# OUTPUT
-# ==================================================
-if run_scan:
-    with st.spinner("Scanning Indian Markets..."):
-        df = run_technical_scan(preset_value)
+# ============================================================
+# RUN BUTTON
+# ============================================================
+if st.button("🚀 Run Screener"):
+    with st.spinner("Running Screener..."):
+        df = run_tv_scan()
 
     if df.empty:
         st.warning("No stocks matched the criteria.")
-    else:
-        st.subheader(f"📋 Results ({len(df)} stocks)")
+        st.stop()
 
-        st.dataframe(
-            df.sort_values("ADX", ascending=False),
-            use_container_width=True
-        )
+    if MODE in ["Technical Screener", "Hybrid Screener"]:
+        df = enrich_local(df)
 
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Technical")
+    st.subheader(f"📋 Results ({len(df)} stocks)")
+    st.dataframe(df, use_container_width=True)
 
-        st.download_button(
-            "⬇️ Download Excel",
-            output.getvalue(),
-            "india_technical_screener.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+    # EXPORT
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False)
 
-# ==================================================
+    st.download_button(
+        "⬇️ Download Excel",
+        output.getvalue(),
+        "stock_screener.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# ============================================================
 # FOOTER
-# ==================================================
+# ============================================================
 st.markdown("---")
 st.markdown(
     """
 **Designed by Gaurav**  
-Price Action • Momentum • Trend Intelligence  
-Built with ❤️ using TradingView
+Technical • Fundamental • Hybrid Intelligence  
+Built with ❤️ using TradingView + Python
 """
 )
